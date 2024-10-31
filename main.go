@@ -133,17 +133,12 @@ var t_values = [screenWidth][screenHeight]int{}
 
 func getTValueChunked(g *Game, startY, endY int) {
 	defer wg.Done()
-	skip := 1
-	for x := 0; x < screenWidth; x += skip {
-		for y := startY; y < endY; y += skip {
+	for x := 0; x < screenWidth; x++ {
+		for y := startY; y < endY; y++ {
 			p := PixelPoint{X: x, Y: y}
 			point := p.toPoint(g)
 			t_value := getTValue(&point)
-			for dx := 0; dx < skip && x+dx < screenWidth; dx++ {
-				for dy := 0; dy < skip && y+dy < endY; dy++ {
-					t_values[x+dx][y+dy] = t_value
-				}
-			}
+			t_values[x][y] = t_value
 		}
 	}
 }
