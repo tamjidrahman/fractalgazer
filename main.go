@@ -37,14 +37,16 @@ func getColor(index int) color.RGBA {
 }
 
 type Game struct {
-	fps        float64
-	xMin       float64
-	xMax       float64
-	yMin       float64
-	yMax       float64
-	scale      float64
-	linearStep float64
-	zoomSpeed  float64
+	fps         float64
+	xMin        float64
+	xMax        float64
+	yMin        float64
+	yMax        float64
+	scale       float64
+	linearStep  float64
+	zoomSpeed   float64
+	tValueCache [screenWidth][screenHeight]int
+	cacheValid  bool
 }
 type Coord = float64
 type PixelCoord = int
@@ -52,21 +54,27 @@ type PixelCoord = int
 func (g *Game) Update() error {
 	g.fps = ebiten.ActualFPS()
 
+	viewChanged := false
+
 	if ebiten.IsKeyPressed(ebiten.KeyA) || ebiten.IsKeyPressed(ebiten.KeyLeft) {
 		g.xMin -= g.linearStep * g.scale
 		g.xMax -= g.linearStep * g.scale
+		viewChanged = true
 	}
 	if ebiten.IsKeyPressed(ebiten.KeyD) || ebiten.IsKeyPressed(ebiten.KeyRight) {
 		g.xMin += g.linearStep * g.scale
 		g.xMax += g.linearStep * g.scale
+		viewChanged = true
 	}
 	if ebiten.IsKeyPressed(ebiten.KeyW) || ebiten.IsKeyPressed(ebiten.KeyUp) {
 		g.yMin += g.linearStep * g.scale
 		g.yMax += g.linearStep * g.scale
+		viewChanged = true
 	}
 	if ebiten.IsKeyPressed(ebiten.KeyS) || ebiten.IsKeyPressed(ebiten.KeyDown) {
 		g.yMin -= g.linearStep * g.scale
 		g.yMax -= g.linearStep * g.scale
+		viewChanged = true
 	}
 	if ebiten.IsKeyPressed(ebiten.KeyQ) {
 		g.scale *= (1.0 - g.zoomSpeed)
@@ -76,6 +84,7 @@ func (g *Game) Update() error {
 		g.xMax = xMid + g.scale
 		g.yMin = yMid - g.scale
 		g.yMax = yMid + g.scale
+		viewChanged = true
 	}
 	if ebiten.IsKeyPressed(ebiten.KeyE) {
 		g.scale *= (1.0 + g.zoomSpeed)
@@ -85,6 +94,11 @@ func (g *Game) Update() error {
 		g.xMax = xMid + g.scale
 		g.yMin = yMid - g.scale
 		g.yMax = yMid + g.scale
+		viewChanged = true
+	}
+
+	if viewChanged {
+		g.cacheValid = false
 	}
 
 	return nil
@@ -145,7 +159,7 @@ var wg sync.WaitGroup
 
 var t_values = [screenWidth][screenHeight]int{}
 
-func getTValueChunked(g *Game, startY, endY int, result []int) {
+func getTValueChunked(g *Game, startY, endY int) {
 	defer wg.Done()
 	for y := startY; y < endY; y++ {
 		for x := 0; x < screenWidth; x++ {
@@ -154,31 +168,36 @@ func getTValueChunked(g *Game, startY, endY int, result []int) {
 				Y: g.yMax - (g.yMax-g.yMin)/screenHeight*float64(y),
 			}
 
-			result[y*screenWidth+x] = getTValue(&point)
-
+			g.tValueCache[x][y] = getTValue(&point)
 		}
 	}
 }
 
 func colorCanvas(g *Game, screen *ebiten.Image) {
-	numGoroutines := runtime.NumCPU()
-	chunkSize := screenHeight / numGoroutines
-	result := make([]int, screenWidth*screenHeight)
+	if !g.cacheValid {
+		numGoroutines := runtime.NumCPU()
+		chunkSize := screenHeight / numGoroutines
 
-	for i := 0; i < numGoroutines; i++ {
-		wg.Add(1)
-		go getTValueChunked(g, i*chunkSize, (i+1)*chunkSize, result)
+		for i := 0; i < numGoroutines; i++ {
+			wg.Add(1)
+			go getTValueChunked(g, i*chunkSize, (i+1)*chunkSize)
+		}
+
+		wg.Wait()
+		g.cacheValid = true
 	}
 
-	wg.Wait()
-
 	pixels := make([]byte, screenWidth*screenHeight*4)
-	for i, v := range result {
-		color := getColor(v)
-		pixels[i*4] = color.R
-		pixels[i*4+1] = color.G
-		pixels[i*4+2] = color.B
-		pixels[i*4+3] = color.A
+	for y := 0; y < screenHeight; y++ {
+		for x := 0; x < screenWidth; x++ {
+			v := g.tValueCache[x][y]
+			color := getColor(v)
+			i := (y*screenWidth + x) * 4
+			pixels[i] = color.R
+			pixels[i+1] = color.G
+			pixels[i+2] = color.B
+			pixels[i+3] = color.A
+		}
 	}
 
 	screen.WritePixels(pixels)
