@@ -52,19 +52,19 @@ type PixelCoord = int
 func (g *Game) Update() error {
 	g.fps = ebiten.ActualFPS()
 
-	if ebiten.IsKeyPressed(ebiten.KeyA) {
+	if ebiten.IsKeyPressed(ebiten.KeyA) || ebiten.IsKeyPressed(ebiten.KeyLeft) {
 		g.xMin -= g.linearStep * g.scale
 		g.xMax -= g.linearStep * g.scale
 	}
-	if ebiten.IsKeyPressed(ebiten.KeyD) {
+	if ebiten.IsKeyPressed(ebiten.KeyD) || ebiten.IsKeyPressed(ebiten.KeyRight) {
 		g.xMin += g.linearStep * g.scale
 		g.xMax += g.linearStep * g.scale
 	}
-	if ebiten.IsKeyPressed(ebiten.KeyW) {
+	if ebiten.IsKeyPressed(ebiten.KeyW) || ebiten.IsKeyPressed(ebiten.KeyUp) {
 		g.yMin += g.linearStep * g.scale
 		g.yMax += g.linearStep * g.scale
 	}
-	if ebiten.IsKeyPressed(ebiten.KeyS) {
+	if ebiten.IsKeyPressed(ebiten.KeyS) || ebiten.IsKeyPressed(ebiten.KeyDown) {
 		g.yMin -= g.linearStep * g.scale
 		g.yMax -= g.linearStep * g.scale
 	}
