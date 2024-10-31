@@ -6,8 +6,6 @@ import (
 	"runtime"
 	"sync"
 
-	"math/cmplx"
-
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 )
@@ -117,17 +115,16 @@ func (p *PixelPoint) toPoint(g *Game) Point {
 }
 
 func getTValue(p *Point) int {
-
-	z_orig := complex(p.X, p.Y)
-
-	z := complex(p.X, p.Y)
-	iterations := 1
-
-	for ; cmplx.Abs(complex128(z)) < 2 && iterations < MAX_ITER; iterations++ {
-		z = z*z + z_orig
+	x0, y0 := p.X, p.Y
+	x, y := 0.0, 0.0
+	iteration := 0
+	for x*x+y*y <= 4 && iteration < MAX_ITER {
+		xtemp := x*x - y*y + x0
+		y = 2*x*y + y0
+		x = xtemp
+		iteration++
 	}
-
-	return iterations
+	return iteration
 }
 
 var wg sync.WaitGroup
@@ -136,12 +133,17 @@ var t_values = [screenWidth][screenHeight]int{}
 
 func getTValueChunked(g *Game, startY, endY int) {
 	defer wg.Done()
-	for x := 0; x < screenWidth; x++ {
-		for y := startY; y < endY; y++ {
+	skip := 1
+	for x := 0; x < screenWidth; x += skip {
+		for y := startY; y < endY; y += skip {
 			p := PixelPoint{X: x, Y: y}
 			point := p.toPoint(g)
 			t_value := getTValue(&point)
-			t_values[x][y] = t_value
+			for dx := 0; dx < skip && x+dx < screenWidth; dx++ {
+				for dy := 0; dy < skip && y+dy < endY; dy++ {
+					t_values[x+dx][y+dy] = t_value
+				}
+			}
 		}
 	}
 }
