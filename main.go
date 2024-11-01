@@ -1,8 +1,13 @@
 package main
 
 import (
+	"flag"
 	"fmt"
+	"image"
 	"image/color"
+	"image/png"
+	"os"
+	"path/filepath"
 	"runtime"
 	"sync"
 
@@ -11,9 +16,9 @@ import (
 )
 
 const (
-	screenWidth  = 1920
-	screenHeight = 1440
-	MAX_ITER     = 100
+	screenWidth  = 3840
+	screenHeight = 2160
+	MAX_ITER     = 800
 )
 
 var colorCache [MAX_ITER + 1]color.RGBA
@@ -47,58 +52,105 @@ type Game struct {
 	zoomSpeed   float64
 	tValueCache [screenWidth][screenHeight]int
 	cacheValid  bool
+	cacheShift  int
+	recording   bool
+	frameCount  int
+	zoomPath    []Point
+	pathIndex   int
+	aspectRatio float64
 }
+
+func (g *Game) generateZoomPath() {
+	startPoint := Point{X: -0.743643887037158704752191506114774, Y: 0.131825904205311970493132056385139}
+	steps := 10000
+	g.zoomPath = make([]Point, steps)
+	for i := 0; i < steps; i++ {
+		g.zoomPath[i] = Point{X: startPoint.X, Y: startPoint.Y}
+	}
+}
+
 type Coord = float64
 type PixelCoord = int
 
 func (g *Game) Update() error {
 	g.fps = ebiten.ActualFPS()
 
-	viewChanged := false
-
-	if ebiten.IsKeyPressed(ebiten.KeyA) || ebiten.IsKeyPressed(ebiten.KeyLeft) {
-		g.xMin -= g.linearStep * g.scale
-		g.xMax -= g.linearStep * g.scale
-		viewChanged = true
-	}
-	if ebiten.IsKeyPressed(ebiten.KeyD) || ebiten.IsKeyPressed(ebiten.KeyRight) {
-		g.xMin += g.linearStep * g.scale
-		g.xMax += g.linearStep * g.scale
-		viewChanged = true
-	}
-	if ebiten.IsKeyPressed(ebiten.KeyW) || ebiten.IsKeyPressed(ebiten.KeyUp) {
-		g.yMin += g.linearStep * g.scale
-		g.yMax += g.linearStep * g.scale
-		viewChanged = true
-	}
-	if ebiten.IsKeyPressed(ebiten.KeyS) || ebiten.IsKeyPressed(ebiten.KeyDown) {
-		g.yMin -= g.linearStep * g.scale
-		g.yMax -= g.linearStep * g.scale
-		viewChanged = true
-	}
-	if ebiten.IsKeyPressed(ebiten.KeyQ) {
-		g.scale *= (1.0 - g.zoomSpeed)
-		yMid := (g.yMin + g.yMax) / 2
-		xMid := (g.xMin + g.xMax) / 2
-		g.xMin = xMid - g.scale
-		g.xMax = xMid + g.scale
-		g.yMin = yMid - g.scale
-		g.yMax = yMid + g.scale
-		viewChanged = true
-	}
-	if ebiten.IsKeyPressed(ebiten.KeyE) {
-		g.scale *= (1.0 + g.zoomSpeed)
-		yMid := (g.yMin + g.yMax) / 2
-		xMid := (g.xMin + g.xMax) / 2
-		g.xMin = xMid - g.scale
-		g.xMax = xMid + g.scale
-		g.yMin = yMid - g.scale
-		g.yMax = yMid + g.scale
-		viewChanged = true
+	if ebiten.IsKeyPressed(ebiten.KeyR) {
+		if !g.recording {
+			g.recording = true
+			g.frameCount = 0
+			g.pathIndex = 0
+			g.generateZoomPath()
+		} else {
+			g.recording = false
+		}
 	}
 
-	if viewChanged {
+	if g.recording && g.pathIndex < len(g.zoomPath) {
+		target := g.zoomPath[g.pathIndex]
+		g.xMin = target.X - g.scale
+		g.xMax = target.X + g.scale
+		yScale := g.scale / g.aspectRatio
+		g.yMin = target.Y - yScale
+		g.yMax = target.Y + yScale
+		g.scale *= 0.99 // Adjust this value to control zoom speed
 		g.cacheValid = false
+
+		if err := g.saveFrame(); err != nil {
+			return err
+		}
+		g.frameCount++
+		g.pathIndex++
+
+		if g.pathIndex == len(g.zoomPath) {
+			g.recording = false
+		}
+	}
+
+	if !g.recording {
+		viewChanged := false
+
+		if ebiten.IsKeyPressed(ebiten.KeyA) || ebiten.IsKeyPressed(ebiten.KeyLeft) {
+			g.xMin -= g.linearStep * g.scale
+			g.xMax -= g.linearStep * g.scale
+			g.shiftCache(1)
+			viewChanged = true
+		}
+		if ebiten.IsKeyPressed(ebiten.KeyD) || ebiten.IsKeyPressed(ebiten.KeyRight) {
+			g.xMin += g.linearStep * g.scale
+			g.xMax += g.linearStep * g.scale
+			g.shiftCache(-1)
+			viewChanged = true
+		}
+		if ebiten.IsKeyPressed(ebiten.KeyW) || ebiten.IsKeyPressed(ebiten.KeyUp) {
+			g.yMin += g.linearStep * g.scale
+			g.yMax += g.linearStep * g.scale
+			viewChanged = true
+		}
+		if ebiten.IsKeyPressed(ebiten.KeyS) || ebiten.IsKeyPressed(ebiten.KeyDown) {
+			g.yMin -= g.linearStep * g.scale
+			g.yMax -= g.linearStep * g.scale
+			viewChanged = true
+		}
+		if ebiten.IsKeyPressed(ebiten.KeyQ) || ebiten.IsKeyPressed(ebiten.KeyE) {
+			if ebiten.IsKeyPressed(ebiten.KeyQ) {
+				g.scale *= (1.0 - g.zoomSpeed)
+			} else {
+				g.scale *= (1.0 + g.zoomSpeed)
+			}
+			yMid := (g.yMin + g.yMax) / 2
+			xMid := (g.xMin + g.xMax) / 2
+			g.xMin = xMid - g.scale
+			g.xMax = xMid + g.scale
+			yScale := g.scale / g.aspectRatio
+			g.yMin = yMid - yScale
+			g.yMax = yMid + yScale
+			viewChanged = true
+		}
+
+		if viewChanged {
+			g.cacheValid = false
+		}
 	}
 
 	return nil
@@ -113,6 +165,36 @@ func (g *Game) Draw(screen *ebiten.Image) {
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 	return screenWidth, screenHeight
+}
+
+func (g *Game) shiftCache(direction int) {
+	g.cacheShift += direction
+	if abs(g.cacheShift) >= screenWidth {
+		g.cacheValid = false
+		g.cacheShift = 0
+		return
+	}
+
+	if direction > 0 {
+		for y := 0; y < screenHeight; y++ {
+			for x := screenWidth - 1; x >= direction; x-- {
+				g.tValueCache[x][y] = g.tValueCache[x-direction][y]
+			}
+		}
+	} else {
+		for y := 0; y < screenHeight; y++ {
+			for x := 0; x < screenWidth+direction; x++ {
+				g.tValueCache[x][y] = g.tValueCache[x-direction][y]
+			}
+		}
+	}
+}
+
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
 }
 
 type Point struct {
@@ -132,8 +214,8 @@ func (p *Point) toPixelPoint(g *Game) PixelPoint {
 
 func (p *PixelPoint) toPoint(g *Game) Point {
 	return Point{
-		X: g.xMin + (g.xMax-g.xMin)/screenWidth*float64(p.X),
-		Y: g.yMax - (g.yMax-g.yMin)/screenHeight*float64(p.Y),
+		X: g.xMin + (g.xMax-g.xMin)/float64(screenWidth)*float64(p.X),
+		Y: g.yMax - (g.yMax-g.yMin)/float64(screenHeight)*float64(p.Y),
 	}
 }
 
@@ -185,6 +267,24 @@ func colorCanvas(g *Game, screen *ebiten.Image) {
 
 		wg.Wait()
 		g.cacheValid = true
+		g.cacheShift = 0
+	} else if g.cacheShift != 0 {
+		startX := 0
+		endX := abs(g.cacheShift)
+		if g.cacheShift < 0 {
+			startX = screenWidth + g.cacheShift
+			endX = screenWidth
+		}
+
+		for y := 0; y < screenHeight; y++ {
+			for x := startX; x < endX; x++ {
+				point := Point{
+					X: g.xMin + (g.xMax-g.xMin)/screenWidth*float64(x),
+					Y: g.yMax - (g.yMax-g.yMin)/screenHeight*float64(y),
+				}
+				g.tValueCache[x][y] = getTValue(&point)
+			}
+		}
 	}
 
 	pixels := make([]byte, screenWidth*screenHeight*4)
@@ -203,19 +303,71 @@ func colorCanvas(g *Game, screen *ebiten.Image) {
 	screen.WritePixels(pixels)
 }
 
+func (g *Game) saveFrame() error {
+	bounds := image.Rect(0, 0, screenWidth, screenHeight)
+	img := image.NewRGBA(bounds)
+	for y := 0; y < screenHeight; y++ {
+		for x := 0; x < screenWidth; x++ {
+			v := g.tValueCache[x][y]
+			color := getColor(v)
+			img.Set(x, y, color)
+		}
+	}
+
+	os.MkdirAll("frames", os.ModePerm)
+	filename := filepath.Join("frames", fmt.Sprintf("frame_%04d.png", g.frameCount))
+	file, err := os.Create(filename)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	return png.Encode(file, img)
+}
+
 func main() {
-	ebiten.SetWindowSize(screenWidth, screenHeight)
-	ebiten.SetWindowTitle("Mandelbrot Set")
+	headless := flag.Bool("headless", false, "Run in headless mode for recording")
+	flag.Parse()
+
+	aspectRatio := float64(screenWidth) / float64(screenHeight)
+
 	game := &Game{
-		xMin:       -2,
-		xMax:       2,
-		yMin:       -2,
-		yMax:       2,
-		scale:      2,
-		linearStep: 0.1,
-		zoomSpeed:  0.05,
+		xMin:        -2,
+		xMax:        2,
+		yMin:        -2 / aspectRatio,
+		yMax:        2 / aspectRatio,
+		scale:       2,
+		linearStep:  0.1,
+		zoomSpeed:   0.05,
+		aspectRatio: aspectRatio,
 	}
-	if err := ebiten.RunGame(game); err != nil {
-		panic(err)
+	game.generateZoomPath()
+
+	if *headless {
+		runHeadless(game)
+	} else {
+		ebiten.SetWindowSize(screenWidth, screenHeight)
+		ebiten.SetWindowTitle("Mandelbrot Set")
+		if err := ebiten.RunGame(game); err != nil {
+			panic(err)
+		}
 	}
+}
+
+func runHeadless(game *Game) {
+	fmt.Println("Running in headless mode for recording...")
+	game.recording = true
+	game.frameCount = 0
+	game.pathIndex = 0
+
+	for game.pathIndex < len(game.zoomPath) {
+		game.Update()
+		img := ebiten.NewImage(screenWidth, screenHeight)
+		game.Draw(img)
+		if err := game.saveFrame(); err != nil {
+			panic(err)
+		}
+		fmt.Printf("Saved frame %d\r", game.frameCount)
+	}
+	fmt.Println("\nRecording complete!")
 }
