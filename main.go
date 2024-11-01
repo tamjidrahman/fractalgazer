@@ -16,9 +16,9 @@ import (
 )
 
 const (
-	screenWidth  = 3840
-	screenHeight = 2160
-	MAX_ITER     = 800
+	screenWidth  = 1920
+	screenHeight = 1080
+	MAX_ITER     = 300
 )
 
 var colorCache [MAX_ITER + 1]color.RGBA
